@@ -8,18 +8,28 @@ from TM1py.Objects.TM1Object import TM1Object
 
 
 class Sandbox(TM1Object):
-    """ Abstraction of a TM1 Sandbox
-        
-    """
+    """Abstraction of a TM1 Sandbox"""
 
-    def __init__(self, name: str, include_in_sandbox_dimension: bool = True):
+    def __init__(
+        self,
+        name: str,
+        include_in_sandbox_dimension: bool = True,
+        loaded: bool = False,
+        active: bool = False,
+        queued: bool = False,
+    ):
         """
-        
         :param name: name of the Sandbox
-        :param include_in_sandbox_dimension: 
+        :param include_in_sandbox_dimension:
+        :param loaded: use default false when creating sandbox
+        :param active: use default false when creating sandbox
+        :param queued: use default false when creating sandbox
         """
         self.name = name
         self.include_in_sandbox_dimension = include_in_sandbox_dimension
+        self.loaded = loaded
+        self.active = active
+        self.queued = queued
 
     @property
     def name(self) -> str:
@@ -39,7 +49,7 @@ class Sandbox(TM1Object):
 
     @classmethod
     def from_json(cls, sandbox_as_json: str) -> "Sandbox":
-        """ Alternative constructor
+        """Alternative constructor
 
         :param sandbox_as_json: user as JSON string
         :return: sandbox, an instance of this class
@@ -49,7 +59,7 @@ class Sandbox(TM1Object):
 
     @classmethod
     def from_dict(cls, sandbox_as_dict: Dict) -> "Sandbox":
-        """ Alternative constructor
+        """Alternative constructor
 
         :param sandbox_as_dict: user as dict
         :return: an instance of this class
@@ -57,6 +67,9 @@ class Sandbox(TM1Object):
         return cls(
             name=sandbox_as_dict["Name"],
             include_in_sandbox_dimension=sandbox_as_dict["IncludeInSandboxDimension"],
+            loaded=sandbox_as_dict["IsLoaded"],
+            active=sandbox_as_dict["IsActive"],
+            queued=sandbox_as_dict["IsQueued"],
         )
 
     @property

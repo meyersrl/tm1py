@@ -3,11 +3,12 @@ import unittest
 import uuid
 from pathlib import Path
 
-from TM1py import Element, Hierarchy, Dimension
-from TM1py.Objects import Cube
-from TM1py.Objects import Rules
+from TM1py import Dimension, Element, Hierarchy
+from TM1py.Exceptions.Exceptions import TM1pyRestException
+from TM1py.Objects import Cube, Rules
 from TM1py.Services import TM1Service
-from .Utils import skip_if_insufficient_version
+
+from .Utils import skip_if_version_higher_or_equal_than, skip_if_version_lower_than
 
 
 class TestCubeService(unittest.TestCase):
@@ -15,46 +16,41 @@ class TestCubeService(unittest.TestCase):
     prefix = "TM1py_Tests_Cube_"
 
     cube_name = prefix + "some_name"
-    control_cube_name = '}' + prefix + 'some_control_cube_name'
-    dimension_names = [
-        prefix + "dimension1",
-        prefix + "dimension2",
-        prefix + "dimension3"]
+    cube_name_to_delete = prefix + "Some_Other_Name"
+    control_cube_name = "}" + prefix + "some_control_cube_name"
+    dimension_names = [prefix + "dimension1", prefix + "dimension2", prefix + "dimension3"]
 
-    @classmethod
-    def setUp(cls):
+    def setUp(self):
 
         # Connection to TM1
-        cls.config = configparser.ConfigParser()
-        cls.config.read(Path(__file__).parent.joinpath('config.ini'))
-        cls.tm1 = TM1Service(**cls.config['tm1srv01'])
+        self.config = configparser.ConfigParser()
+        self.config.read(Path(__file__).parent.joinpath("config.ini"))
+        self.tm1 = TM1Service(**self.config["tm1srv01"])
 
-        for dimension_name in cls.dimension_names:
-            elements = [Element('Element {}'.format(str(j)), 'Numeric') for j in range(1, 1001)]
-            hierarchy = Hierarchy(dimension_name=dimension_name,
-                                  name=dimension_name,
-                                  elements=elements)
+        for dimension_name in self.dimension_names:
+            elements = [Element("Element {}".format(str(j)), "Numeric") for j in range(1, 1001)]
+            hierarchy = Hierarchy(dimension_name=dimension_name, name=dimension_name, elements=elements)
             dimension = Dimension(dimension_name, [hierarchy])
-            if not cls.tm1.dimensions.exists(dimension.name):
-                cls.tm1.dimensions.create(dimension)
+            if not self.tm1.dimensions.exists(dimension.name):
+                self.tm1.dimensions.create(dimension)
 
         # Build Cube
-        cube = Cube(cls.cube_name, cls.dimension_names)
-        if not cls.tm1.cubes.exists(cls.cube_name):
-            cls.tm1.cubes.create(cube)
-        c = Cube(cls.cube_name, dimensions=cls.dimension_names, rules=Rules(''))
-        if cls.tm1.cubes.exists(c.name):
-            cls.tm1.cubes.delete(c.name)
-        cls.tm1.cubes.create(c)
+        cube = Cube(self.cube_name, self.dimension_names)
+        if not self.tm1.cubes.exists(self.cube_name):
+            self.tm1.cubes.create(cube)
+        c = Cube(self.cube_name, dimensions=self.dimension_names, rules=Rules(""))
+        if self.tm1.cubes.exists(c.name):
+            self.tm1.cubes.delete(c.name)
+        self.tm1.cubes.create(c)
 
         # Build Control Cube
-        control_cube = Cube(cls.control_cube_name, cls.dimension_names)
-        if not cls.tm1.cubes.exists(cls.control_cube_name):
-            cls.tm1.cubes.create(control_cube)
-        c = Cube(cls.control_cube_name, dimensions=cls.dimension_names, rules=Rules(''))
-        if cls.tm1.cubes.exists(c.name):
-            cls.tm1.cubes.delete(c.name)
-        cls.tm1.cubes.create(c)
+        control_cube = Cube(self.control_cube_name, self.dimension_names)
+        if not self.tm1.cubes.exists(self.control_cube_name):
+            self.tm1.cubes.create(control_cube)
+        c = Cube(self.control_cube_name, dimensions=self.dimension_names, rules=Rules(""))
+        if self.tm1.cubes.exists(c.name):
+            self.tm1.cubes.delete(c.name)
+        self.tm1.cubes.create(c)
 
     def test_get_cube(self):
         c = self.tm1.cubes.get(self.cube_name)
@@ -104,20 +100,16 @@ class TestCubeService(unittest.TestCase):
         self.assertFalse(self.tm1.cubes.exists(uuid.uuid4()))
 
     def test_create_delete_cube(self):
-        cube_name = self.prefix + "Some_Other_Name"
+        cube_name = self.cube_name_to_delete
         # element with index 0 is Sandboxes
         dimension_names = self.tm1.dimensions.get_all_names()[1:3]
         cube = Cube(cube_name, dimension_names)
 
         all_cubes_before = self.tm1.cubes.get_all_names()
-        self.tm1.cubes.create(cube)
+        self.tm1.cubes.update_or_create(cube)
         all_cubes_after = self.tm1.cubes.get_all_names()
-        self.assertEqual(
-            len(all_cubes_before) + 1,
-            len(all_cubes_after))
-        self.assertEqual(
-            self.tm1.cubes.get_dimension_names(cube_name),
-            dimension_names)
+        self.assertEqual(len(all_cubes_before) + 1, len(all_cubes_after))
+        self.assertEqual(self.tm1.cubes.get_dimension_names(cube_name), dimension_names)
 
         all_cubes_before = self.tm1.cubes.get_all_names()
         self.tm1.cubes.delete(cube_name)
@@ -131,13 +123,14 @@ class TestCubeService(unittest.TestCase):
 
         self.assertEqual(len(all_cubes_before), len(cubes_with_rules) + len(cubes_without_rules))
 
-        self.assertNotEqual(len(self.tm1.cubes.get_all_names()),
-                            len(self.tm1.cubes.get_all_names(skip_control_cubes=True)))
+        self.assertNotEqual(
+            len(self.tm1.cubes.get_all_names()), len(self.tm1.cubes.get_all_names(skip_control_cubes=True))
+        )
 
         cube_name = self.prefix + "Some_Other_Name"
         dimension_names = self.tm1.dimensions.get_all_names()[1:3]
         cube = Cube(cube_name, dimension_names)
-        self.tm1.cubes.create(cube)
+        self.tm1.cubes.update_or_create(cube)
         self.assertEqual(len(cubes_without_rules) + 1, len(self.tm1.cubes.get_all_names_without_rules()))
         self.assertEqual(len(cubes_with_rules), len(self.tm1.cubes.get_all_names_with_rules()))
 
@@ -149,14 +142,17 @@ class TestCubeService(unittest.TestCase):
         self.tm1.cubes.delete(cube_name)
 
         cube = self.tm1.cubes.get(self.control_cube_name)
-        cube.rules = "#find_control_comment"
+        cube.rules = "SKIPCHECK"
         self.tm1.cubes.update(cube)
-        self.assertNotEqual(self.tm1.cubes.get_all_names_with_rules(),
-                            self.tm1.cubes.get_all_names_with_rules(skip_control_cubes=True))
-        self.assertNotEqual(self.tm1.cubes.get_all_names_without_rules(),
-                            self.tm1.cubes.get_all_names_without_rules(skip_control_cubes=True))
+        self.assertNotEqual(
+            self.tm1.cubes.get_all_names_with_rules(), self.tm1.cubes.get_all_names_with_rules(skip_control_cubes=True)
+        )
+        self.assertNotEqual(
+            self.tm1.cubes.get_all_names_without_rules(),
+            self.tm1.cubes.get_all_names_without_rules(skip_control_cubes=True),
+        )
 
-    @skip_if_insufficient_version(version="11.4")
+    @skip_if_version_lower_than(version="11.4")
     def test_get_storage_dimension_order(self):
         dimensions = self.tm1.cubes.get_storage_dimension_order(cube_name=self.cube_name)
         self.assertEqual(dimensions, self.dimension_names)
@@ -180,20 +176,20 @@ class TestCubeService(unittest.TestCase):
     def test_search_for_dimension_substring_happy_case(self):
         cubes = self.tm1.cubes.search_for_dimension_substring(substring=self.dimension_names[0])
         self.assertEqual(
-            {self.cube_name: [self.dimension_names[0]], self.control_cube_name: [self.dimension_names[0]]},
-            cubes)
+            {self.cube_name: [self.dimension_names[0]], self.control_cube_name: [self.dimension_names[0]]}, cubes
+        )
 
     def test_search_for_dimension_substring_case_insensitive(self):
         cubes = self.tm1.cubes.search_for_dimension_substring(substring=self.dimension_names[1].upper())
         self.assertEqual(
-            cubes,
-            {self.cube_name: [self.dimension_names[1]], self.control_cube_name: [self.dimension_names[1]]})
+            cubes, {self.cube_name: [self.dimension_names[1]], self.control_cube_name: [self.dimension_names[1]]}
+        )
 
     def test_search_for_dimension_substring_space_insensitive(self):
         cubes = self.tm1.cubes.search_for_dimension_substring(substring=" " + self.dimension_names[2] + " ")
         self.assertEqual(
-            cubes,
-            {self.cube_name: [self.dimension_names[2]], self.control_cube_name: [self.dimension_names[2]]})
+            cubes, {self.cube_name: [self.dimension_names[2]], self.control_cube_name: [self.dimension_names[2]]}
+        )
 
     def test_search_for_dimension_substring_no_match(self):
         cubes = self.tm1.cubes.search_for_dimension_substring(substring="NotADimensionName")
@@ -203,30 +199,36 @@ class TestCubeService(unittest.TestCase):
         cubes = self.tm1.cubes.search_for_dimension_substring(substring="}cubes", skip_control_cubes=True)
         self.assertEqual({}, cubes)
 
-    def test_search_for_dimension_substring_skip_control_cubes_false(self):
+    @skip_if_version_higher_or_equal_than(version="12")
+    def test_search_for_dimension_substring_skip_control_cubes_false_v11(self):
         cubes = self.tm1.cubes.search_for_dimension_substring(substring="}cubes", skip_control_cubes=False)
-        self.assertEqual(cubes['}CubeProperties'], ['}Cubes'])
+        self.assertEqual(cubes["}CubeProperties"], ["}Cubes"])
+
+    @skip_if_version_lower_than(version="12")
+    def test_search_for_dimension_substring_skip_control_cubes_false_v12(self):
+        cubes = self.tm1.cubes.search_for_dimension_substring(substring="}cubes", skip_control_cubes=False)
+        self.assertEqual(cubes["}CubeSecurity"], ["}Cubes"])
 
     def test_get_number_of_cubes(self):
         number_of_cubes = self.tm1.cubes.get_number_of_cubes()
         self.assertIsInstance(number_of_cubes, int)
 
-    @skip_if_insufficient_version(version="11.4")
+    @skip_if_version_lower_than(version="11.4")
     def test_update_storage_dimension_order(self):
         self.tm1.cubes.update_storage_dimension_order(
-            cube_name=self.cube_name,
-            dimension_names=reversed(self.dimension_names))
+            cube_name=self.cube_name, dimension_names=reversed(self.dimension_names)
+        )
         dimensions = self.tm1.cubes.get_storage_dimension_order(self.cube_name)
-        self.assertEqual(
-            list(reversed(dimensions)),
-            self.dimension_names)
+        self.assertEqual(list(reversed(dimensions)), self.dimension_names)
 
-    @skip_if_insufficient_version(version="11.6")
+    @skip_if_version_lower_than(version="11.6")
+    @skip_if_version_higher_or_equal_than(version="12")
     def test_load(self):
         response = self.tm1.cubes.load(cube_name=self.cube_name)
         self.assertTrue(response.ok)
 
-    @skip_if_insufficient_version(version="11.6")
+    @skip_if_version_lower_than(version="11.6")
+    @skip_if_version_higher_or_equal_than(version="12")
     def test_unload(self):
         response = self.tm1.cubes.unload(cube_name=self.cube_name)
         self.assertTrue(response.ok)
@@ -251,6 +253,48 @@ class TestCubeService(unittest.TestCase):
 
         errors = self.tm1.cubes.check_rules(cube_name=self.cube_name)
         self.assertEqual(1, len(errors))
+
+    def test_update_or_create_rules_str_happy_case(self):
+        """
+        Check if the rules: str will be updated or created on cube
+        """
+        rules = "#test_rules"
+        self.tm1.cubes.update_or_create_rules(cube_name=self.cube_name, rules=rules)
+        self.assertEqual(rules, self.tm1.cubes.get(cube_name=self.cube_name).rules.text)
+
+    def test_update_or_create_rules_happy_case(self):
+        """
+        Check if the rules: Rules will be updated or created on cube
+        """
+        rules = Rules("#test_rules_update")
+        self.tm1.cubes.update_or_create_rules(cube_name=self.cube_name, rules=rules)
+        self.assertEqual(rules.text, self.tm1.cubes.get(cube_name=self.cube_name).rules.text)
+
+    def test_update_or_create_rules_for_nonexistent_cube(self):
+        """
+        Check if the function will raise TM1pyRestException for an update on a nonexistent cube
+        """
+        nonexist_cube_name = "nonexist_cube"
+        rules = "#test_rules"
+        self.assertRaises(
+            TM1pyRestException, lambda: self.tm1.cubes.update_or_create_rules(cube_name=nonexist_cube_name, rules=rules)
+        )
+
+    def test_update_or_create_rules_list_typing_error(self):
+        """
+        Check if the function will raise a ValueError for rules in list type
+        """
+        self.assertRaises(
+            ValueError, lambda: self.tm1.cubes.update_or_create_rules(cube_name=self.cube_name, rules=["#list_rules"])
+        )
+
+    def test_update_or_create_rules_dict_typing_error(self):
+        """
+        Check if the function will raise a ValueError for rules in dict type
+        """
+        self.assertRaises(
+            ValueError, lambda: self.tm1.cubes.update_or_create_rules(cube_name=self.cube_name, rules={"#dict_rules"})
+        )
 
     def test_search_for_rule_substring_no_match(self):
         cubes = self.tm1.cubes.search_for_rule_substring(substring="find_nothing")
@@ -293,13 +337,14 @@ class TestCubeService(unittest.TestCase):
 
         self.assertEqual(self.dimension_names[-1], measure_dimension)
 
-    @classmethod
-    def tearDown(cls):
-        cls.tm1.cubes.delete(cls.cube_name)
-        for dimension in cls.dimension_names:
-            cls.tm1.dimensions.delete(dimension)
-        cls.tm1.logout()
+    def tearDown(self):
+        self.tm1.cubes.delete(self.cube_name)
+        if self.tm1.cubes.exists(self.cube_name_to_delete):
+            self.tm1.cubes.delete(self.cube_name_to_delete)
+        for dimension in self.dimension_names:
+            self.tm1.dimensions.delete(dimension)
+        self.tm1.logout()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

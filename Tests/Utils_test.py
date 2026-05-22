@@ -2,15 +2,44 @@ import configparser
 import unittest
 from pathlib import Path
 
+try:
+    import numpy as np
+    import pandas as pd
+except ImportError:
+    pass
+
+from TM1py.Exceptions.Exceptions import (
+    TM1pyNotAdminException,
+    TM1pyNotDataAdminException,
+    TM1pyNotOpsAdminException,
+    TM1pyNotSecurityAdminException,
+)
 from TM1py.Services import TM1Service
 from TM1py.Utils import (
+    CellUpdateableProperty,
     Utils,
+    add_url_parameters,
+    build_dataframe_from_csv,
+    cell_is_updateable,
+    drop_dimension_properties,
+    extract_cell_properties_from_odata_context,
+    extract_cell_updateable_property,
+    format_url,
+    frame_to_significant_digits,
+    get_cube,
     get_dimensions_from_where_clause,
     integerize_version,
-    verify_version, get_cube, resembles_mdx, format_url, add_url_parameters, extract_cell_updateable_property,
-    CellUpdateableProperty, cell_is_updateable, extract_cell_properties_from_odata_context,
-    map_cell_properties_to_compact_json_response, frame_to_significant_digits
+    map_cell_properties_to_compact_json_response,
+    reorder_with_priority,
+    require_admin,
+    require_data_admin,
+    require_ops_admin,
+    require_security_admin,
+    resembles_mdx,
+    verify_version,
 )
+
+from .Utils import skip_if_paoc, skip_if_version_higher_or_equal_than
 
 
 class TestUtilsMethods(unittest.TestCase):
@@ -26,45 +55,51 @@ class TestUtilsMethods(unittest.TestCase):
         cls.config = configparser.ConfigParser()
         cls.config.read(Path(__file__).parent.joinpath("config.ini"))
         cls.tm1 = TM1Service(**cls.config["tm1srv01"])
+        cls.EXCEPTION_MESSAGES = {
+            "is_admin": "admin",
+            "is_data_admin": "DataAdmin",
+            "is_security_admin": "SecurityAdmin",
+            "is_ops_admin": "OperationsAdmin",
+        }
 
+    @skip_if_paoc
+    @skip_if_version_higher_or_equal_than(version="12")
     def test_get_instances_from_adminhost(self):
-        servers = Utils.get_all_servers_from_adminhost(
-            self.config["tm1srv01"]["address"]
-        )
+        servers = Utils.get_all_servers_from_adminhost(self.config["tm1srv01"]["address"])
         self.assertGreater(len(servers), 0)
 
     def test_integerize_version(self):
         version = "11.0.00000.918"
         integerized_version = integerize_version(version)
-        self.assertEqual(110, integerized_version)
+        self.assertEqual(1100, integerized_version)
 
         version = "11.0.00100.927-0"
         integerized_version = integerize_version(version)
-        self.assertEqual(110, integerized_version)
+        self.assertEqual(1100, integerized_version)
 
         version = "11.1.00004.2"
         integerized_version = integerize_version(version)
-        self.assertEqual(111, integerized_version)
+        self.assertEqual(1110, integerized_version)
 
         version = "11.2.00000.27"
         integerized_version = integerize_version(version)
-        self.assertEqual(112, integerized_version)
+        self.assertEqual(1120, integerized_version)
 
         version = "11.3.00003.1"
         integerized_version = integerize_version(version)
-        self.assertEqual(113, integerized_version)
+        self.assertEqual(1130, integerized_version)
 
         version = "11.4.00003.8"
         integerized_version = integerize_version(version)
-        self.assertEqual(114, integerized_version)
+        self.assertEqual(1140, integerized_version)
 
         version = "11.7.00002.1"
         integerized_version = integerize_version(version)
-        self.assertEqual(117, integerized_version)
+        self.assertEqual(1170, integerized_version)
 
         version = "11.8.00000.33"
         integerized_version = integerize_version(version)
-        self.assertEqual(118, integerized_version)
+        self.assertEqual(1180, integerized_version)
 
     def test_verify_version_true(self):
         required_version = "11.7.00002.1"
@@ -100,6 +135,101 @@ class TestUtilsMethods(unittest.TestCase):
         """
         dimensions = get_dimensions_from_where_clause(mdx)
         self.assertEqual(["DIM2", "DIM1"], dimensions)
+
+    def test_build_dataframe_from_csv(self):
+        raw_csv = "d1~d2~Value\r\n" "e1~e1~1.0\r\n" "e1~e2~2.0\r\n" "e2~e1~3.0\r\n" "e2~e2~4.0"
+        df = build_dataframe_from_csv(raw_csv)
+
+        expected_df = pd.DataFrame(
+            {
+                "d1": ["e1", "e1", "e2", "e2"],
+                "d2": ["e1", "e2", "e1", "e2"],
+                "Value": [1.0, 2.0, 3.0, 4.0],
+            }
+        )
+
+        pd._testing.assert_frame_equal(expected_df, df, check_column_type=False)
+
+    def test_build_dataframe_from_csv_shaped_numbers_and_strings(self):
+        raw_csv = (
+            "Region~Product~Measure~Value\r\n"
+            "r1~p1~Revenue~1.0\r\n"
+            "r1~p2~Revenue~3.0\r\n"
+            "r1~p1~Comment~Great Product\r\n"
+            "r1~p2~Comment~"
+        )
+        df = build_dataframe_from_csv(raw_csv, dtype={"Revenue": float}, shaped=True)
+
+        expected_df = pd.DataFrame(
+            {
+                "Region": ["r1", "r1"],
+                "Product": ["p1", "p2"],
+                "Comment": ["Great Product", ""],
+                "Revenue": [1.00000, 3.00000],
+            }
+        )
+
+        # explicit conversion for exact comparison
+        expected_df["Revenue"] = expected_df["Revenue"].astype(float)
+        df["Revenue"] = df["Revenue"].astype(float)
+
+        pd._testing.assert_frame_equal(expected_df, df)
+
+    def test_build_dataframe_from_csv_shaped(self):
+        raw_csv = "Region~Product~Measure~Value\r\n" "r1~p1~Revenue~1.0\r\n" "r1~p2~Revenue~3.0\r\n" "r2~p2~Revenue~4.0"
+        df = build_dataframe_from_csv(raw_csv, dtype={"Revenue": float}, shaped=True)
+
+        expected_df = pd.DataFrame(
+            {
+                "Region": ["r1", "r1", "r2"],
+                "Product": ["p1", "p2", "p2"],
+                "Revenue": [1.00000, 3.00000, 4.00000],
+            }
+        )
+
+        pd._testing.assert_frame_equal(expected_df, df, check_column_type=False)
+
+    def test_build_dataframe_from_csv_shaped_with_duplicates(self):
+        raw_csv = "Region~Product~Measure~Value\r\n" "r1~p1~Revenue~1.0\r\n" "r1~p1~Revenue~1.0\r\n" "r2~p2~Revenue~4.0"
+        df = build_dataframe_from_csv(raw_csv, dtype={"Revenue": float}, shaped=True)
+
+        expected_df = pd.DataFrame(
+            {
+                "Region": ["r1", "r1", "r2"],
+                "Product": ["p1", "p1", "p2"],
+                "Revenue": [1.00000, 1.00000, 4.00000],
+            }
+        )
+
+        pd._testing.assert_frame_equal(expected_df, df, check_column_type=False)
+
+    def test_build_dataframe_from_csv_with_none_element_and_none_value(self):
+        raw_csv = "d1~d2~Value\r\n" "e1~e1~None\r\n" "e1~e2~2.0\r\n" "None~e1~3.0\r\n" "None~e2~4.0"
+        df = build_dataframe_from_csv(raw_csv)
+
+        expected_df = pd.DataFrame(
+            {
+                "d1": ["e1", "e1", "None", "None"],
+                "d2": ["e1", "e2", "e1", "e2"],
+                "Value": [np.nan, 2.0, 3.0, 4.0],
+            }
+        ).astype(object)
+
+        pd._testing.assert_frame_equal(expected_df, df, check_column_type=False, check_dtype=False, check_exact=False)
+
+    def test_build_dataframe_from_csv_with_none_and_empty_string_value(self):
+        raw_csv = "d1~d2~Value\r\n" "e1~e1~None\r\n" 'e1~e2~""\r\n' "None~e1~3.0\r\n" "None~e2~4.0"
+        df = build_dataframe_from_csv(raw_csv)
+
+        expected_df = pd.DataFrame(
+            {
+                "d1": ["e1", "e1", "None", "None"],
+                "d2": ["e1", "e2", "e1", "e2"],
+                "Value": [np.nan, "", "3.0", "4.0"],
+            }
+        ).astype(object)
+
+        pd._testing.assert_frame_equal(expected_df, df, check_column_type=False, check_dtype=False, check_exact=False)
 
     def test_get_dimensions_from_where_clause_no_where(self):
         mdx = """
@@ -229,72 +359,64 @@ class TestUtilsMethods(unittest.TestCase):
         self.assertTrue(resembles_mdx(mdx))
 
     def test_format_url_args_no_single_quote(self):
-        url = "/api/v1/Processes('{}')/tm1.ExecuteWithReturn?$expand=*"
+        url = "/Processes('{}')/tm1.ExecuteWithReturn?$expand=*"
         process_name = "process"
         escaped_url = format_url(url, process_name)
-        self.assertEqual(
-            "/api/v1/Processes('process')/tm1.ExecuteWithReturn?$expand=*", escaped_url
-        )
+        self.assertEqual("/Processes('process')/tm1.ExecuteWithReturn?$expand=*", escaped_url)
 
     def test_format_url_args_one_single_quote(self):
-        url = "/api/v1/Processes('{}')/tm1.ExecuteWithReturn?$expand=*"
+        url = "/Processes('{}')/tm1.ExecuteWithReturn?$expand=*"
         process_name = "pro'cess"
         escaped_url = format_url(url, process_name)
         self.assertEqual(
-            "/api/v1/Processes('pro''cess')/tm1.ExecuteWithReturn?$expand=*",
+            "/Processes('pro''cess')/tm1.ExecuteWithReturn?$expand=*",
             escaped_url,
         )
 
     def test_format_url_args_multi_single_quote(self):
-        url = "/api/v1/Processes('{}')/tm1.ExecuteWithReturn?$expand=*"
+        url = "/Processes('{}')/tm1.ExecuteWithReturn?$expand=*"
         process_name = "pro'ces's"
         escaped_url = format_url(url, process_name)
         self.assertEqual(
-            "/api/v1/Processes('pro''ces''s')/tm1.ExecuteWithReturn?$expand=*",
+            "/Processes('pro''ces''s')/tm1.ExecuteWithReturn?$expand=*",
             escaped_url,
         )
 
     def test_format_url_kwargs_no_single_quote(self):
-        url = "/api/v1/Processes('{process_name}')/tm1.ExecuteWithReturn?$expand=*"
+        url = "/Processes('{process_name}')/tm1.ExecuteWithReturn?$expand=*"
         process_name = "process"
         escaped_url = format_url(url, process_name=process_name)
-        self.assertEqual(
-            "/api/v1/Processes('process')/tm1.ExecuteWithReturn?$expand=*", escaped_url
-        )
+        self.assertEqual("/Processes('process')/tm1.ExecuteWithReturn?$expand=*", escaped_url)
 
     def test_format_url_kwargs_one_single_quote(self):
-        url = "/api/v1/Processes('{process_name}')/tm1.ExecuteWithReturn?$expand=*"
+        url = "/Processes('{process_name}')/tm1.ExecuteWithReturn?$expand=*"
         process_name = "pro'cess"
         escaped_url = format_url(url, process_name=process_name)
         self.assertEqual(
-            "/api/v1/Processes('pro''cess')/tm1.ExecuteWithReturn?$expand=*",
+            "/Processes('pro''cess')/tm1.ExecuteWithReturn?$expand=*",
             escaped_url,
         )
 
     def test_format_url_kwargs_multi_single_quote(self):
-        url = "/api/v1/Processes('{process_name}')/tm1.ExecuteWithReturn?$expand=*"
+        url = "/Processes('{process_name}')/tm1.ExecuteWithReturn?$expand=*"
         process_name = "pro'ces's"
         escaped_url = format_url(url, process_name=process_name)
         self.assertEqual(
-            "/api/v1/Processes('pro''ces''s')/tm1.ExecuteWithReturn?$expand=*",
+            "/Processes('pro''ces''s')/tm1.ExecuteWithReturn?$expand=*",
             escaped_url,
         )
 
     def test_url_parameters_add(self):
-        url = "/api/v1/Cubes('cube')/tm1.Update"
+        url = "/Cubes('cube')/tm1.Update"
         url = add_url_parameters(url, **{"!sandbox": "sandbox1"})
 
-        self.assertEqual(
-            "/api/v1/Cubes('cube')/tm1.Update?!sandbox=sandbox1",
-            url)
+        self.assertEqual("/Cubes('cube')/tm1.Update?!sandbox=sandbox1", url)
 
     def test_url_parameters_add_with_query_options(self):
-        url = "/api/v1/Cellsets('abcd')?$expand=Cells($select=Value)"
+        url = "/Cellsets('abcd')?$expand=Cells($select=Value)"
         url = add_url_parameters(url, **{"!sandbox": "sandbox1"})
 
-        self.assertEqual(
-            "/api/v1/Cellsets('abcd')?$expand=Cells($select=Value)&!sandbox=sandbox1",
-            url)
+        self.assertEqual("/Cellsets('abcd')?$expand=Cells($select=Value)&!sandbox=sandbox1", url)
 
     def test_get_seconds_from_duration(self):
         elapsed_time = "P0DT00H04M02S"
@@ -311,97 +433,294 @@ class TestUtilsMethods(unittest.TestCase):
 
     def test_extract_cell_updateable_property_rule_is_applied_true(self):
         value = 268435716
-        self.assertTrue(extract_cell_updateable_property(
-            decimal_value=value,
-            cell_property=CellUpdateableProperty.RULE_IS_APPLIED))
+        self.assertTrue(
+            extract_cell_updateable_property(decimal_value=value, cell_property=CellUpdateableProperty.RULE_IS_APPLIED)
+        )
 
     def test_extract_cell_updateable_property_rule_is_applied_false(self):
         value = 258
-        self.assertFalse(extract_cell_updateable_property(
-            decimal_value=value,
-            cell_property=CellUpdateableProperty.RULE_IS_APPLIED))
+        self.assertFalse(
+            extract_cell_updateable_property(decimal_value=value, cell_property=CellUpdateableProperty.RULE_IS_APPLIED)
+        )
 
     def test_extract_cell_updateable_property_cell_is_not_updateable_true(self):
         value = 268435716
-        self.assertTrue(extract_cell_updateable_property(
-            decimal_value=value,
-            cell_property=CellUpdateableProperty.CELL_IS_NOT_UPDATEABLE))
+        self.assertTrue(
+            extract_cell_updateable_property(
+                decimal_value=value, cell_property=CellUpdateableProperty.CELL_IS_NOT_UPDATEABLE
+            )
+        )
 
     def test_extract_cell_updateable_property_cell_is_not_updateable_false(self):
         value = 258
-        self.assertFalse(extract_cell_updateable_property(
-            decimal_value=value,
-            cell_property=CellUpdateableProperty.CELL_IS_NOT_UPDATEABLE))
+        self.assertFalse(
+            extract_cell_updateable_property(
+                decimal_value=value, cell_property=CellUpdateableProperty.CELL_IS_NOT_UPDATEABLE
+            )
+        )
 
     def test_cell_is_updateable_true(self):
-        cell = {'Updateable': 258}
+        cell = {"Updateable": 258}
         self.assertTrue(cell_is_updateable(cell))
 
     def test_cell_is_updateable_false(self):
-        cell = {'Updateable': 268435716}
+        cell = {"Updateable": 268435716}
         self.assertFalse(cell_is_updateable(cell))
 
     def test_extract_cell_properties_from_odata_context_cell_properties(self):
         context = "$metadata#Cellsets(Cells(Ordinal,Value,RuleDerived))/$entity"
         cell_properties = extract_cell_properties_from_odata_context(context)
 
-        self.assertEqual(['Ordinal', 'Value', 'RuleDerived'], cell_properties)
+        self.assertEqual(["Ordinal", "Value", "RuleDerived"], cell_properties)
 
     def test_extract_cell_properties_from_odata_context_only_value(self):
         context = "$metadata#Cellsets(Cells(Value))/$entity"
         cell_properties = extract_cell_properties_from_odata_context(context)
 
-        self.assertEqual(['Value'], cell_properties)
+        self.assertEqual(["Value"], cell_properties)
 
     def test_map_cell_properties_to_compact_json_response_ordinal_value(self):
-        properties = ['Ordinal', 'Value']
+        properties = ["Ordinal", "Value"]
         compact_cells_response = [[1, 200], [2, 350], [3, 100]]
         actual = map_cell_properties_to_compact_json_response(properties, compact_cells_response)
 
-        expected = {'Cells': [
-            {'Ordinal': 1, 'Value': 200},
-            {'Ordinal': 2, 'Value': 350},
-            {'Ordinal': 3, 'Value': 100},
-        ]}
+        expected = {
+            "Cells": [
+                {"Ordinal": 1, "Value": 200},
+                {"Ordinal": 2, "Value": 350},
+                {"Ordinal": 3, "Value": 100},
+            ]
+        }
 
         self.assertEqual(expected, actual)
 
     def test_map_cell_properties_to_compact_json_response_value(self):
-        properties = ['Value']
+        properties = ["Value"]
         compact_cells_response = [[200], [350], [100]]
         actual = map_cell_properties_to_compact_json_response(properties, compact_cells_response)
 
-        expected = {'Cells': [
-            {'Value': 200},
-            {'Value': 350},
-            {'Value': 100},
-        ]}
+        expected = {
+            "Cells": [
+                {"Value": 200},
+                {"Value": 350},
+                {"Value": 100},
+            ]
+        }
 
         self.assertEqual(expected, actual)
 
     def test_frame_to_significant_digits_happy_case(self):
         framed_value = frame_to_significant_digits(1000, 4)
-        self.assertEqual('1000', framed_value)
+        self.assertEqual("1000", framed_value)
 
     def test_frame_to_significant_digits_too_many_decimals(self):
         framed_value = frame_to_significant_digits(1000.1234, 6)
-        self.assertEqual('1000.12', framed_value)
+        self.assertEqual("1000.12", framed_value)
 
     def test_frame_to_significant_digits_too_many_digits(self):
         framed_value = frame_to_significant_digits(1234, 2)
-        self.assertEqual('1200', framed_value)
-
-    def test_frame_to_significant_digits_too_many_digits(self):
-        framed_value = frame_to_significant_digits(1234, 2)
-        self.assertEqual('1200', framed_value)
+        self.assertEqual("1200", framed_value)
 
     def test_frame_to_significant_digits_scientific_too_many_digits(self):
-        framed_value = frame_to_significant_digits(1.2345E-1, 2)
-        self.assertEqual('0.12', framed_value)
+        framed_value = frame_to_significant_digits(1.2345e-1, 2)
+        self.assertEqual("0.12", framed_value)
 
-    def test_frame_to_significant_digits_scientific_too_many_digits(self):
-        framed_value = frame_to_significant_digits(1.2345E3, 2)
-        self.assertEqual('1200.0', framed_value)
+    def test_frame_to_significant_digits_scientific_too_many_digits_large(self):
+        framed_value = frame_to_significant_digits(1.2345e3, 2)
+        self.assertEqual("1200.0", framed_value)
+
+    def test_element_name_from_element_unique_name_happy_case(self):
+        element_name = Utils.element_name_from_element_unique_name("[d1].[e1]")
+        self.assertEqual("e1", element_name)
+
+    def test_element_name_from_element_unique_name_with_double_closing_square_bracket(self):
+        element_name = Utils.element_name_from_element_unique_name("[d1].[other [please specify]]]")
+        self.assertEqual("other [please specify]", element_name)
+
+    def test_drop_dimension_properties_attributes(self):
+        mdx = """
+            SELECT
+            NON EMPTY {[dim2].[dim2].[elem2]} DIMENSION PROPERTIES [dim2].[dim2].[name] ON 0,
+            NON EMPTY {TM1FILTERBYLEVEL({TM1SUBSETALL([dim1].[dim1])},0)} DIMENSION PROPERTIES [dim1].[dim1].[codeandname] ON 1
+            FROM [cube]
+            WHERE ([dim3].[dim3].[elem3],[dim4].[dim4].[elem4])
+        """
+        expected_mdx = """
+            SELECT
+            NON EMPTY {[dim2].[dim2].[elem2]}  ON 0,
+            NON EMPTY {TM1FILTERBYLEVEL({TM1SUBSETALL([dim1].[dim1])},0)}  ON 1
+            FROM [cube]
+            WHERE ([dim3].[dim3].[elem3],[dim4].[dim4].[elem4])
+        """
+        self.assertEqual(expected_mdx, drop_dimension_properties(mdx))
+
+    def test_drop_dimension_properties_member_name(self):
+        mdx = """
+        SELECT
+        {[d1].[e1]} PROPERTIES MEMBER_NAME ON 0,
+        {[d2].[e1]} PROPERTIES MEMBER_NAME ON 1
+        FROM [c1]
+        """
+        expected_mdx = """
+        SELECT
+        {[d1].[e1]} ON 0,
+        {[d2].[e1]} ON 1
+        FROM [c1]
+        """
+        self.assertEqual(expected_mdx, drop_dimension_properties(mdx))
+
+    def test_drop_dimension_properties_member_name_lower_case(self):
+        mdx = """
+        SELECT
+        {[d1].[e1]} properties member_name ON 0,
+        {[d2].[e1]} properties member_name ON 1
+        FROM [c1]
+        """
+        expected_mdx = """
+        SELECT
+        {[d1].[e1]} ON 0,
+        {[d2].[e1]} ON 1
+        FROM [c1]
+        """
+        self.assertEqual(expected_mdx, drop_dimension_properties(mdx))
+
+    def test_drop_dimension_properties_one_axis(self):
+        mdx = """
+        SELECT
+        {[d1].[e1]} * {[d2].[e1]} properties member_name ON 0
+        FROM [c1]
+        """
+        expected_mdx = """
+        SELECT
+        {[d1].[e1]} * {[d2].[e1]} ON 0
+        FROM [c1]
+        """
+        self.assertEqual(expected_mdx, drop_dimension_properties(mdx))
+
+    def test_drop_properties_attributes(self):
+        mdx = """
+            SELECT
+            NON EMPTY {[dim2].[dim2].[elem2]} PROPERTIES [dim2].[dim2].[name] ON 0,
+            NON EMPTY {TM1FILTERBYLEVEL({TM1SUBSETALL([dim1].[dim1])},0)} PROPERTIES [dim1].[dim1].[codeandname] ON 1
+            FROM [cube]
+            WHERE ([dim3].[dim3].[elem3],[dim4].[dim4].[elem4])
+        """
+        expected_mdx = """
+            SELECT
+            NON EMPTY {[dim2].[dim2].[elem2]} ON 0,
+            NON EMPTY {TM1FILTERBYLEVEL({TM1SUBSETALL([dim1].[dim1])},0)} ON 1
+            FROM [cube]
+            WHERE ([dim3].[dim3].[elem3],[dim4].[dim4].[elem4])
+        """
+        self.assertEqual(expected_mdx, drop_dimension_properties(mdx))
+
+    def test_reorder_with_priority(self):
+        original_items = [
+            "Customer by Budget holder",
+            "Customer by Segment",
+            "Customer List",
+            "Leaves",
+            "Customer",
+            "Customer by Region",
+        ]
+        priority_items = ["Customer", "Customer List"]
+        exclude_items = ["Leaves"]
+        sort_remaining = True
+
+        expected_outcome = [
+            "Customer",
+            "Customer List",
+            "Customer by Budget holder",
+            "Customer by Region",
+            "Customer by Segment",
+        ]
+
+        self.assertEqual(
+            expected_outcome, reorder_with_priority(original_items, priority_items, exclude_items, sort_remaining)
+        )
+
+    def _run_permission_test(self, attr_name, decorator, value, expected_exception=None):
+        class Dummy:
+            pass
+
+        setattr(Dummy, attr_name, value)
+
+        @decorator
+        def test_method(self):
+            return "OK"
+
+        Dummy.method = test_method
+        dummy = Dummy()
+
+        if expected_exception:
+            with self.assertRaises(expected_exception) as context:
+                dummy.method()
+            required_permission = self.EXCEPTION_MESSAGES[attr_name]
+            self.assertEqual(
+                str(context.exception), f"Function 'test_method' requires {required_permission} permissions"
+            )
+        else:
+            self.assertEqual(dummy.method(), "OK")
+
+    def test_require_admin_allows(self):
+        self._run_permission_test(
+            attr_name="is_admin",
+            decorator=require_admin,
+            value=True,
+        )
+
+    def test_require_admin_blocks(self):
+        self._run_permission_test(
+            attr_name="is_admin",
+            decorator=require_admin,
+            value=False,
+            expected_exception=TM1pyNotAdminException,
+        )
+
+    def test_require_data_admin_allows(self):
+        self._run_permission_test(
+            attr_name="is_data_admin",
+            decorator=require_data_admin,
+            value=True,
+        )
+
+    def test_require_data_admin_blocks(self):
+        self._run_permission_test(
+            attr_name="is_data_admin",
+            decorator=require_data_admin,
+            value=False,
+            expected_exception=TM1pyNotDataAdminException,
+        )
+
+    def test_require_security_admin_allows(self):
+        self._run_permission_test(
+            attr_name="is_security_admin",
+            decorator=require_security_admin,
+            value=True,
+        )
+
+    def test_require_security_admin_blocks(self):
+        self._run_permission_test(
+            attr_name="is_security_admin",
+            decorator=require_security_admin,
+            value=False,
+            expected_exception=TM1pyNotSecurityAdminException,
+        )
+
+    def test_require_ops_admin_allows(self):
+        self._run_permission_test(
+            attr_name="is_ops_admin",
+            decorator=require_ops_admin,
+            value=True,
+        )
+
+    def test_require_ops_admin_blocks(self):
+        self._run_permission_test(
+            attr_name="is_ops_admin",
+            decorator=require_ops_admin,
+            value=False,
+            expected_exception=TM1pyNotOpsAdminException,
+        )
 
     @classmethod
     def tearDownClass(cls):

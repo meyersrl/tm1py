@@ -1,12 +1,12 @@
+<h1 align="center">
+<img src="https://raw.githubusercontent.com/cubewise-code/tm1py/master/Images/Logo.svg" style="width: 70%; height: 70%; text-align: center"/>
 
-<img src="https://s3-ap-southeast-2.amazonaws.com/downloads.cubewise.com/web_assets/CubewiseLogos/TM1py-logo.png" style="width: 70%; height: 70%;text-align: center"/>
+![PyPI - License](https://img.shields.io/pypi/l/TM1py)
+![PyPI - Version](https://img.shields.io/pypi/v/TM1py)
+![Pepy Total Downloads](https://img.shields.io/pepy/dt/TM1py)
+</h1>
 
-
-By wrapping the IBM Planning Analytics (TM1) REST API in a concise Python framework, TM1py facilitates Python developments for TM1.
-
-Interacting with TM1 programmatically has never been easier.
-
-
+TM1py is the python package for IBM Planning Analytics (TM1).
 
 ``` python
 with TM1Service(address='localhost', port=8001, user='admin', password='apple', ssl=True) as tm1:
@@ -19,28 +19,25 @@ Features
 
 TM1py offers handy features to interact with TM1 from Python, such as
 
-- Read data from cubes through cube views and MDX Queries
-- Write data into cubes
-- Execute processes and chores
-- Execute loose statements of TI
-- CRUD features for TM1 objects (cubes, dimensions, subsets, etc.)
-- Query and kill threads
-- Query MessageLog, TransactionLog and AuditLog
-- Generate MDX Queries from existing cube views
+- Functions to read data from cubes through cube views or MDX queries (e.g. `tm1.cells.execute_mdx`)
+- Functions to write data to cubes (e.g. `tm1.cells.write`)
+- Functions to update dimensions and hierarchies (e.g. `tm1.hierarchies.get`)
+- Functions to update metadata, clear or write to cubes directly from pandas dataframes  (e.g. `tm1.elements.get_elements_dataframe`)
+- Async functions to easily parallelize your read or write operations (e.g. `tm1.cells.write_async`)
+- Functions to execute TI process or loose statements of TI (e.g. `tm1.processes.execute_with_return`)
+- CRUD features for all TM1 objects (cubes, dimensions, subsets, etc.)
 
 Requirements
 =======================
 
-- python (3.7 or higher)
-- requests
-- requests_negotiate_sspi
-- TM1 11 
+- [Python](https://www.python.org/downloads/) (3.7 or higher)
+- [TM1/Planning Analytics](https://www.ibm.com/products/planning-analytics) (v11 or higher)
 
-
-Optional Requirements
+Optional Python Packages
 =======================
 
 - pandas
+- networkx
 
 Install
 =======================
@@ -52,23 +49,20 @@ Install
 > with pandas
 
     pip install "tm1py[pandas]"
-    
-    
+
 Usage
 =======================
 
-> on-premise
+> TM1 11 on-premise
 
 ``` python
 from TM1py.Services import TM1Service
 
 with TM1Service(address='localhost', port=8001, user='admin', password='apple', ssl=True) as tm1:
-    for chore in tm1.chores.get_all():
-        chore.reschedule(hours=-1)
-        tm1.chores.update(chore)
+    print(tm1.server.get_product_version())
 ```
 
-> IBM cloud
+> TM1 11 on IBM cloud
 
 ``` python
 with TM1Service(
@@ -79,28 +73,67 @@ with TM1Service(
         ssl=True,
         verify=True,
         async_requests_mode=True) as tm1:
-    for chore in tm1.chores.get_all():
-        chore.reschedule(hours=-1)
-        tm1.chores.update(chore)
+    print(tm1.server.get_product_version())
 ```
 
+> TM1 12 PAaaS
 
-Samples:
-https://github.com/cubewise-code/TM1py-samples
+``` python
+from TM1py import TM1Service
 
+params = {
+    "base_url": "https://us-east-1.planninganalytics.saas.ibm.com/api/<TenantId>/v0/tm1/<DatabaseName>/",
+    "user": "apikey",
+    "password": "<TheActualApiKey>",
+    "async_requests_mode": True,
+    "ssl": True,
+    "verify": True
+}
+
+with TM1Service(**params) as tm1:
+    print(tm1.server.get_product_version())
+```
+
+> TM1 12 on-premise & Cloud Pak For Data
+
+``` python
+with TM1Service(
+        address="tm1-ibm-operands-services.apps.cluster.your-cluster.company.com",
+        instance="your instance name",
+        database="your database name",
+        application_client_id="client id",
+        application_client_secret="client secret",
+        user="admin",
+        ssl=True) as tm1:
+
+    print(tm1.server.get_product_version())
+```
+
+> TM1 12 on-premise with access token
+
+``` python
+params = {
+    "base_url": "https://pa12.dev.net/api/<InstanceId>/v0/tm1/<DatabaseName>",
+    "user": "8643fd6....8a6b",
+    "access_token":"<TheActualAccessToken>",
+    "async_requests_mode": True,
+    "ssl": True,
+    "verify": True
+}
+
+with TM1Service(**params) as tm1:
+    print(tm1.server.get_product_version())
+```
 
 Documentation
 =======================
 
-Detailed Installation instructions and Samples:
-https://github.com/cubewise-code/TM1py-samples
-
+<https://tm1py.org/>
 
 Issues
 =======================
 
-If you find issues, sign up in Github and open an Issue in this repository
-
+If you find issues, sign up in GitHub and open an Issue in this repository
 
 Contribution
 =======================
